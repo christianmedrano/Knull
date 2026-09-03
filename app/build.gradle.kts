@@ -67,4 +67,7 @@ dependencies {
 
     // Lifecycle Service
     implementation(libs.androidx.lifecycle.service)
+
+    val workVersion = "2.9.0"
+    implementation("androidx.work:work-runtime-ktx:$workVersion")
 }
