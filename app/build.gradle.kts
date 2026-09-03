@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "pe.com.scotiabank.blpm.android.knull"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "pe.com.scotiabank.blpm.android.knull"
@@ -56,4 +56,15 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+
+    // CameraX
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+
+    // Google ML Kit - Detección de rostros
+    implementation(libs.google.mlkit.face.detection)
+
+    // Lifecycle Service
+    implementation(libs.androidx.lifecycle.service)
 }
