@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -39,6 +40,7 @@ import androidx.work.WorkManager
 import pe.com.scotiabank.blpm.android.knull.faceguard.AdminReceiver
 import pe.com.scotiabank.blpm.android.knull.faceguard.FaceGuardService
 import pe.com.scotiabank.blpm.android.knull.faceguard.FaceGuardWorker
+import pe.com.scotiabank.blpm.android.knull.faceguard.FaceMatcher
 import pe.com.scotiabank.blpm.android.knull.faceguard.FacePreloader
 import pe.com.scotiabank.blpm.android.knull.ui.theme.KnullTheme
 
@@ -97,10 +99,15 @@ fun HomeScreen(
         if (uri != null) {
             statusText = "Analizando foto..."
             FacePreloader.preloadBlockedFaceFromUri(context, uri) { success ->
-                statusText = if (success) {
-                    "¡Rostro registrado correctamente desde la galería!"
+                if (success) {
+                    val total = FaceMatcher.getSavedEmbeddingsCount(context)
+                    val msg = "¡Rostro registrado! Total de fotos acumuladas: $total"
+                    statusText = msg
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                 } else {
-                    "Error: No se detectó ningún rostro en la foto seleccionada."
+                    val msgError = "Error: No se detectó ningún rostro en la foto seleccionada."
+                    statusText = msgError
+                    Toast.makeText(context, msgError, Toast.LENGTH_SHORT).show()
                 }
             }
         } else {
@@ -136,7 +143,34 @@ fun HomeScreen(
         Spacer(modifier = Modifier.height(8.dp))
         Text(text = statusText, style = MaterialTheme.typography.bodySmall)
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Botón para consultar la cantidad de fotos cargadas
+        Button(onClick = {
+            val total = FaceMatcher.getSavedEmbeddingsCount(context)
+            val msg = "Fotos/rostros registrados actualmente: $total"
+            statusText = msg
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+        }) {
+            Text("Consultar Rostros Registrados")
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Botón para limpiar los registros de SharedPreferences
+        Button(onClick = {
+            context.getSharedPreferences("face_guard_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .clear()
+                .apply()
+            val msg = "Todos los registros de rostros han sido eliminados"
+            statusText = msg
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+        }) {
+            Text("Limpiar Todos los Registros")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         Button(onClick = onStartService) {
             Text("3. Iniciar Servicio en Segundo Plano")
