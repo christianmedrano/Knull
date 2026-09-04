@@ -87,15 +87,15 @@ class FaceGuardService : LifecycleService() {
             }
             stopHandler.postDelayed(stopRunnable, 3500)
 
-            imageAnalysis.setAnalyzer(cameraExecutor, FaceAnalyzer { faces ->
+            imageAnalysis.setAnalyzer(cameraExecutor, FaceAnalyzer { faces, faceBitmap ->
                 if (!isDone) {
                     if (faces.isNotEmpty()) {
                         val currentFace = faces.first()
 
-                        if (FaceMatcher.isBlockedUser(this@FaceGuardService, currentFace)) {
+                        if (FaceMatcher.isBlockedUser(this@FaceGuardService, currentFace, faceBitmap)) {
                             isDone = true
                             stopHandler.removeCallbacks(stopRunnable)
-                            mainHandler.removeCallbacks(scanRunnable) // Detener ciclo periódico
+                            mainHandler.removeCallbacks(scanRunnable)
 
                             lockScreen()
                             cameraProvider.unbindAll()

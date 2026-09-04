@@ -70,4 +70,6 @@ dependencies {
 
     val workVersion = "2.9.0"
     implementation("androidx.work:work-runtime-ktx:$workVersion")
+
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }
