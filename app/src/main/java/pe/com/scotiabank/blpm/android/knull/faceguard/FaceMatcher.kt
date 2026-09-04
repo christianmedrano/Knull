@@ -15,7 +15,7 @@ object FaceMatcher {
 
     private const val PREFS_NAME = "face_guard_prefs"
     private const val KEY_VECTOR = "blocked_face_vector"
-    private const val KEY_FACENET_EMBEDDINGS = "facenet_embeddings_list"
+    private const val KEY_EMBEDDINGS_SET = "facenet_embeddings_set"
 
     // =========================================================================
     // FLAG DE CONFIGURACIÓN: Cambia a false para regresar a tus landmarks
@@ -51,6 +51,7 @@ object FaceMatcher {
     // =========================================================================
     private var tfliteInterpreter: Interpreter? = null
 
+    @Synchronized
     private fun getInterpreter(context: Context): Interpreter {
         if (tfliteInterpreter == null) {
             val assetFileDescriptor = context.assets.openFd("facenet.tflite")
@@ -59,7 +60,9 @@ object FaceMatcher {
             val startOffset = assetFileDescriptor.startOffset
             val declaredLength = assetFileDescriptor.declaredLength
             val modelBuffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-            tfliteInterpreter = Interpreter(modelBuffer)
+
+            val options = Interpreter.Options().apply { setNumThreads(4) }
+            tfliteInterpreter = Interpreter(modelBuffer, options)
         }
         return tfliteInterpreter!!
     }
@@ -67,7 +70,6 @@ object FaceMatcher {
     fun extractFaceNetEmbedding(context: Context, faceBitmap: Bitmap): FloatArray {
         val interpreter = getInterpreter(context)
 
-        // Redimensionar rostro a 160x160 (entrada estándar de FaceNet)
         val resizedBitmap = Bitmap.createScaledBitmap(faceBitmap, 160, 160, true)
         val inputBuffer = ByteBuffer.allocateDirect(1 * 160 * 160 * 3 * 4)
         inputBuffer.order(ByteOrder.nativeOrder())
@@ -81,13 +83,13 @@ object FaceMatcher {
             inputBuffer.putFloat(((pixelValue and 0xFF) - 127.5f) / 128.0f)
         }
 
-        val embeddingOutput = Array(1) { FloatArray(128) }
+        val embeddingOutput = Array(1) { FloatArray(512) }
         interpreter.run(inputBuffer, embeddingOutput)
         return embeddingOutput[0]
     }
 
     // =========================================================================
-    // MÉTODOS PÚBLICOS UNIFICADOS (TRANSPARENTES PARA EL RESTO DE TU APP)
+    // MÉTODOS PÚBLICOS UNIFICADOS
     // =========================================================================
 
     fun saveBlockedFace(context: Context, face: Face, faceBitmap: Bitmap? = null) {
@@ -95,14 +97,13 @@ object FaceMatcher {
             val newEmbedding = extractFaceNetEmbedding(context, faceBitmap)
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-            // Guardar múltiples embeddings acumulados (soporta fotos de frente, perfil, etc.)
-            val existingData = prefs.getString(KEY_FACENET_EMBEDDINGS, "") ?: ""
+            val currentSet = prefs.getStringSet(KEY_EMBEDDINGS_SET, emptySet())?.toMutableSet() ?: mutableSetOf()
             val newSerializedVector = newEmbedding.joinToString(",")
-            val updatedData = if (existingData.isEmpty()) newSerializedVector else "$existingData;$newSerializedVector"
+            currentSet.add(newSerializedVector)
 
-            prefs.edit().putString(KEY_FACENET_EMBEDDINGS, updatedData).apply()
+            prefs.edit().putStringSet(KEY_EMBEDDINGS_SET, currentSet).apply()
         } else {
-            // Guardado por Landmarks (Original)
+            // Guardado por Landmarks
             val vector = extractFacialVector(face) ?: return
             val vectorString = vector.joinToString(",")
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -114,21 +115,17 @@ object FaceMatcher {
 
     fun isBlockedUser(context: Context, currentFace: Face, faceBitmap: Bitmap? = null): Boolean {
         if (USE_FACENET && faceBitmap != null) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val savedData = prefs.getString(KEY_FACENET_EMBEDDINGS, null) ?: return false
+            val savedEmbeddingsList = getSavedEmbeddings(context)
+            if (savedEmbeddingsList.isEmpty()) return false
 
             val currentEmbedding = extractFaceNetEmbedding(context, faceBitmap)
-            val savedEmbeddingsList = savedData.split(";").map { vectorStr ->
-                vectorStr.split(",").mapNotNull { it.toFloatOrNull() }.toFloatArray()
-            }
 
-            // Comparar contra todas las fotos registradas
-            val THRESHOLD = 0.40f // Umbral de distancia euclidiana de FaceNet
+            val THRESHOLD = 0.75f // Umbral para vectores de 512 dimensiones
             return savedEmbeddingsList.any { savedVector ->
                 calculateEuclideanDistance(currentEmbedding, savedVector) < THRESHOLD
             }
         } else {
-            // Verificación por Landmarks (Original)
+            // Verificación por Landmarks
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val savedData = prefs.getString(KEY_VECTOR, null) ?: return false
 
@@ -144,6 +141,22 @@ object FaceMatcher {
 
             val averageError = totalError / savedVector.size
             return averageError < 0.08f
+        }
+    }
+
+    private fun getSavedEmbeddings(context: Context): List<FloatArray> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedSet = prefs.getStringSet(KEY_EMBEDDINGS_SET, emptySet()) ?: return emptyList()
+
+        return savedSet.mapNotNull { rawEmbedding ->
+            try {
+                val parts = rawEmbedding.split(",")
+                if (parts.size == 512) {
+                    FloatArray(512) { index -> parts[index].toFloat() }
+                } else null
+            } catch (e: Exception) {
+                null
+            }
         }
     }
 
@@ -163,9 +176,6 @@ object FaceMatcher {
     }
 
     fun getSavedEmbeddingsCount(context: Context): Int {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val savedData = prefs.getString(KEY_FACENET_EMBEDDINGS, null) ?: return 0
-        if (savedData.isEmpty()) return 0
-        return savedData.split(";").size
+        return getSavedEmbeddings(context).size
     }
 }

@@ -9,9 +9,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.Display
+import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -25,14 +28,12 @@ class FaceGuardService : LifecycleService() {
     private lateinit var devicePolicyManager: DevicePolicyManager
     private val cameraExecutor = Executors.newSingleThreadExecutor()
 
-    // Manejo del ciclo de 30 segundos
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val SCAN_INTERVAL_MS = 30_000L // 30 segundos
+    private val SCAN_INTERVAL_MS = 30_000L
 
     private val scanRunnable = object : Runnable {
         override fun run() {
             verifyUserFace()
-            // Programar la siguiente verificación en 30 segundos
             mainHandler.postDelayed(this, SCAN_INTERVAL_MS)
         }
     }
@@ -41,12 +42,10 @@ class FaceGuardService : LifecycleService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_USER_PRESENT -> {
-                    // 1. Escanear inmediatamente al desbloquear
                     mainHandler.removeCallbacks(scanRunnable)
                     mainHandler.post(scanRunnable)
                 }
                 Intent.ACTION_SCREEN_OFF -> {
-                    // 2. Apagar los escaneos si la pantalla se apaga para no gastar batería
                     mainHandler.removeCallbacks(scanRunnable)
                 }
             }
@@ -58,7 +57,6 @@ class FaceGuardService : LifecycleService() {
         devicePolicyManager = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         startForegroundService()
 
-        // Registrar eventos de desbloqueo y apagado de pantalla
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_USER_PRESENT)
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -71,13 +69,18 @@ class FaceGuardService : LifecycleService() {
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
 
+            // Obtener orientación actual de la pantalla para CameraX
+            val displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+            val defaultDisplay = displayManager.getDisplay(Display.DEFAULT_DISPLAY)
+            val rotation = defaultDisplay?.rotation ?: Surface.ROTATION_0
+
             val imageAnalysis = ImageAnalysis.Builder()
+                .setTargetRotation(rotation)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
 
             var isDone = false
 
-            // La cámara permanece activa buscando durante 3.5 segundos en cada ciclo
             val stopHandler = Handler(Looper.getMainLooper())
             val stopRunnable = Runnable {
                 if (!isDone) {
@@ -139,7 +142,7 @@ class FaceGuardService : LifecycleService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { // Android 14+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
                 1,
                 notification,
