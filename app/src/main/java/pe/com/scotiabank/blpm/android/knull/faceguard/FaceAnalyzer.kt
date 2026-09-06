@@ -32,10 +32,18 @@ class FaceAnalyzer(
 
             detector.process(image)
                 .addOnSuccessListener { faces ->
-                    if (faces.isNotEmpty() && FaceMatcher.USE_FACENET) {
-                        val bitmap = imageProxy.toBitmap().rotate(rotationDegrees)
-                        val face = faces.first()
-                        val croppedBitmap = cropFace(bitmap, face.boundingBox)
+                    if (faces.isNotEmpty()) {
+                        val croppedBitmap = if (FaceMatcher.USE_FACENET) {
+                            // 1. Obtenemos el bitmap original (que viene rotado)
+                            val rawBitmap = imageProxy.toBitmap()
+
+                            // 2. Enderezamos el bitmap completo ANTES de recortar
+                            val rotatedBitmap = rotateBitmap(rawBitmap, rotationDegrees)
+
+                            // 3. Recortamos el rostro usando el cuadro que nos da ML Kit
+                            cropFace(rotatedBitmap, faces.first().boundingBox)
+                        } else null
+
                         onResult(faces, croppedBitmap)
                     } else {
                         onResult(faces, null)
@@ -52,17 +60,27 @@ class FaceAnalyzer(
         }
     }
 
-    private fun cropFace(bitmap: Bitmap, boundingBox: Rect): Bitmap {
-        val left = boundingBox.left.coerceAtLeast(0)
-        val top = boundingBox.top.coerceAtLeast(0)
-        val width = boundingBox.width().coerceAtMost(bitmap.width - left)
-        val height = boundingBox.height().coerceAtMost(bitmap.height - top)
-        return Bitmap.createBitmap(bitmap, left, top, width, height)
+    // Esta función endereza la imagen según la posición del celular
+    private fun rotateBitmap(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
+        if (rotationDegrees == 0) return bitmap
+        val matrix = Matrix().apply { postRotate(rotationDegrees.toFloat()) }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
-    private fun Bitmap.rotate(degrees: Int): Bitmap {
-        if (degrees == 0) return this
-        val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
-        return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
+    // Esta función recorta el rostro de la imagen ya enderezada
+    private fun cropFace(bitmap: Bitmap, boundingBox: Rect): Bitmap? {
+        return try {
+            // Aseguramos que el cuadro de recorte no se salga de la foto
+            val left = boundingBox.left.coerceIn(0, bitmap.width - 1)
+            val top = boundingBox.top.coerceIn(0, bitmap.height - 1)
+            val width = boundingBox.width().coerceAtMost(bitmap.width - left)
+            val height = boundingBox.height().coerceAtMost(bitmap.height - top)
+
+            if (width <= 0 || height <= 0) return null
+
+            Bitmap.createBitmap(bitmap, left, top, width, height)
+        } catch (e: Exception) {
+            null
+        }
     }
 }

@@ -37,7 +37,10 @@
             android:name=".InvisibleBootActivity"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:excludeFromRecents="true"
-            android:exported="false" />
+            android:exported="true"
+            android:directBootAware="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
 
         <!-- Servicio que procesa la cámara en segundo plano -->
 
@@ -45,6 +48,7 @@
             android:name=".faceguard.FaceGuardService"
             android:enabled="true"
             android:exported="false"
+            android:directBootAware="true"
             android:foregroundServiceType="camera" />
 
         <!-- Admin de dispositivo para ejecutar el bloqueo del teléfono -->

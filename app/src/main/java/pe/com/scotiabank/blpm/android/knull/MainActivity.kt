@@ -4,6 +4,8 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -11,7 +13,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -22,7 +23,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,16 +33,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.coerceAtMost
 import androidx.compose.ui.unit.dp
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetectorOptions
 import pe.com.scotiabank.blpm.android.knull.faceguard.AdminReceiver
 import pe.com.scotiabank.blpm.android.knull.faceguard.FaceGuardService
 import pe.com.scotiabank.blpm.android.knull.faceguard.FaceGuardWorker
 import pe.com.scotiabank.blpm.android.knull.faceguard.FaceMatcher
 import pe.com.scotiabank.blpm.android.knull.faceguard.FacePreloader
-import pe.com.scotiabank.blpm.android.knull.ui.theme.KnullTheme
+import kotlin.ranges.coerceIn
 
 class MainActivity : ComponentActivity() {
 
@@ -98,17 +101,25 @@ fun HomeScreen(
     ) { uri: Uri? ->
         if (uri != null) {
             statusText = "Analizando foto..."
-            FacePreloader.preloadBlockedFaceFromUri(context, uri) { success ->
-                if (success) {
-                    val total = FaceMatcher.getSavedEmbeddingsCount(context)
-                    val msg = "¡Rostro registrado! Total de fotos acumuladas: $total"
-                    statusText = msg
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            try {
+                // 1. Convertir la URI de la galería a un Bitmap
+                val bitmap = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    val source = android.graphics.ImageDecoder.createSource(context.contentResolver, uri)
+                    android.graphics.ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+                        decoder.isMutableRequired = true // Para que sea modificable
+                    }
                 } else {
-                    val msgError = "Error: No se detectó ningún rostro en la foto seleccionada."
-                    statusText = msgError
-                    Toast.makeText(context, msgError, Toast.LENGTH_SHORT).show()
+                    @Suppress("DEPRECATION")
+                    android.provider.MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                 }
+
+                // 2. Llamar a la función que recorta el rostro y guarda el embedding
+                procesarFotoGaleria(context, bitmap)
+
+                statusText = "Procesamiento de galería completado"
+            } catch (e: Exception) {
+                statusText = "Error al cargar imagen: ${e.message}"
+                Toast.makeText(context, "Error al abrir la foto", Toast.LENGTH_SHORT).show()
             }
         } else {
             statusText = "Selección de foto cancelada"
@@ -175,6 +186,50 @@ fun HomeScreen(
         Button(onClick = onStartService) {
             Text("3. Iniciar Servicio en Segundo Plano")
         }
+    }
+}
+
+fun procesarFotoGaleria(context: Context, bitmapGaleria: Bitmap) {
+    // 1. Configurar el detector de rostros (igual que en el analizador)
+    val options = FaceDetectorOptions.Builder()
+        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+        .build()
+    val detector = FaceDetection.getClient(options)
+    val image = InputImage.fromBitmap(bitmapGaleria, 0)
+
+    detector.process(image)
+        .addOnSuccessListener { faces ->
+            if (faces.isNotEmpty()) {
+                val face = faces.first()
+
+                // 2. Recortar el rostro del bitmap de la galería
+                // Nota: Asegúrate de tener la función cropFace disponible (la que definimos antes)
+                val croppedFace = cropFace(bitmapGaleria, face.boundingBox)
+
+                if (croppedFace != null) {
+                    // 3. Guardar el embedding usando FaceMatcher
+                    FaceMatcher.saveBlockedFace(context, face, croppedFace)
+                    Toast.makeText(context, "Rostro de galería registrado con éxito", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(context, "No se detectó ningún rostro en la foto", Toast.LENGTH_SHORT).show()
+            }
+        }
+        .addOnFailureListener {
+            Toast.makeText(context, "Error al procesar imagen de galería", Toast.LENGTH_SHORT).show()
+        }
+}
+
+// Función auxiliar de recorte (puedes ponerla aquí o en un archivo de Utils)
+private fun cropFace(bitmap: Bitmap, boundingBox: Rect): Bitmap? {
+    return try {
+        val left = boundingBox.left.coerceIn(0, bitmap.width - 1)
+        val top = boundingBox.top.coerceIn(0, bitmap.height - 1)
+        val width = boundingBox.width().coerceAtMost(bitmap.width - left)
+        val height = boundingBox.height().coerceAtMost(bitmap.height - top)
+        Bitmap.createBitmap(bitmap, left, top, width, height)
+    } catch (e: Exception) {
+        null
     }
 }
 

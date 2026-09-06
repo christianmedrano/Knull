@@ -62,12 +62,17 @@ class FaceGuardService : LifecycleService() {
             addAction(Intent.ACTION_SCREEN_OFF)
         }
         registerReceiver(screenReceiver, filter)
+        // Inicia el ciclo de escaneo inmediatamente al crearse el servicio.
+        // Esto cubre el arranque desde InvisibleBootActivity tras el reinicio.
+        mainHandler.post(scanRunnable)
     }
 
     private fun verifyUserFace() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
+            // 1. Limpiar cualquier binding previo para asegurar un inicio limpio
+            cameraProvider.unbindAll()
 
             // Obtener orientación actual de la pantalla para CameraX
             val displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -75,6 +80,7 @@ class FaceGuardService : LifecycleService() {
             val rotation = defaultDisplay?.rotation ?: Surface.ROTATION_0
 
             val imageAnalysis = ImageAnalysis.Builder()
+                .setTargetResolution(android.util.Size(1280, 720)) // Forzamos HD para capturar mejor detalle
                 .setTargetRotation(rotation)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
@@ -88,7 +94,7 @@ class FaceGuardService : LifecycleService() {
                     cameraProvider.unbindAll()
                 }
             }
-            stopHandler.postDelayed(stopRunnable, 3500)
+            //stopHandler.postDelayed(stopRunnable, 3500)
 
             imageAnalysis.setAnalyzer(cameraExecutor, FaceAnalyzer { faces, faceBitmap ->
                 if (!isDone) {
@@ -110,8 +116,9 @@ class FaceGuardService : LifecycleService() {
             val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
 
             try {
-                cameraProvider.unbindAll()
+                //cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(this, cameraSelector, imageAnalysis)
+                stopHandler.postDelayed(stopRunnable, 3500)//se movió aquí
             } catch (e: Exception) {
                 e.printStackTrace()
             }
