@@ -1,28 +1,32 @@
 package pe.com.scotiabank.blpm.android.knull
 
+import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
-import android.graphics.Rect
 import android.net.Uri
 import android.os.Bundle
+import android.os.Process
 import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,25 +37,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.coerceAtMost
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetectorOptions
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import pe.com.scotiabank.blpm.android.knull.faceguard.AdminReceiver
 import pe.com.scotiabank.blpm.android.knull.faceguard.FaceGuardService
-import pe.com.scotiabank.blpm.android.knull.faceguard.FaceGuardWorker
-import pe.com.scotiabank.blpm.android.knull.faceguard.FaceMatcher
-import pe.com.scotiabank.blpm.android.knull.faceguard.FacePreloader
-import kotlin.ranges.coerceIn
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Solicita el permiso para mostrar sobre otras aplicaciones si no está concedido
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -61,12 +60,18 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            var isAuthorized by remember { mutableStateOf(false) }
+
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    HomeScreen(
-                        onEnableAdmin = { requestDeviceAdmin() },
-                        onStartService = { startGuardService() }
-                    )
+                    if (isAuthorized) {
+                        HomeScreen(
+                            onEnableAdmin = { requestDeviceAdmin() },
+                            onStartService = { startGuardService() }
+                        )
+                    } else {
+                        LoginScreen(onAccessGranted = { isAuthorized = true })
+                    }
                 }
             }
         }
@@ -76,7 +81,7 @@ class MainActivity : ComponentActivity() {
         val componentName = ComponentName(this, AdminReceiver::class.java)
         val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, componentName)
-            putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Permite bloquear la pantalla si se detecta uso no autorizado.")
+            putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Permite la protección del dispositivo contra desinstalación.")
         }
         startActivity(intent)
     }
@@ -92,40 +97,6 @@ fun HomeScreen(
     onEnableAdmin: () -> Unit,
     onStartService: () -> Unit
 ) {
-    val context = LocalContext.current
-    var statusText by remember { mutableStateOf("Ninguna foto cargada") }
-
-    // Selector nativo de fotos de Android
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            statusText = "Analizando foto..."
-            try {
-                // 1. Convertir la URI de la galería a un Bitmap
-                val bitmap = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    val source = android.graphics.ImageDecoder.createSource(context.contentResolver, uri)
-                    android.graphics.ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
-                        decoder.isMutableRequired = true // Para que sea modificable
-                    }
-                } else {
-                    @Suppress("DEPRECATION")
-                    android.provider.MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
-                }
-
-                // 2. Llamar a la función que recorta el rostro y guarda el embedding
-                procesarFotoGaleria(context, bitmap)
-
-                statusText = "Procesamiento de galería completado"
-            } catch (e: Exception) {
-                statusText = "Error al cargar imagen: ${e.message}"
-                Toast.makeText(context, "Error al abrir la foto", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            statusText = "Selección de foto cancelada"
-        }
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -133,107 +104,132 @@ fun HomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(text = "Guardia Facial", style = MaterialTheme.typography.headlineMedium)
+        Text(text = "Panel de Control", style = MaterialTheme.typography.headlineMedium)
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        Button(onClick = onEnableAdmin) {
-            Text("1. Activar Permiso de Bloqueo")
-        }
+        // INTEGRACIÓN: Verificación de permiso de estadísticas de uso
+        UsagePermissionCheck()
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
-        Button(onClick = {
-            photoPickerLauncher.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-            )
-        }) {
-            Text("2. Seleccionar Foto de la Galería")
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(text = statusText, style = MaterialTheme.typography.bodySmall)
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Botón para consultar la cantidad de fotos cargadas
-        Button(onClick = {
-            val total = FaceMatcher.getSavedEmbeddingsCount(context)
-            val msg = "Fotos/rostros registrados actualmente: $total"
-            statusText = msg
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-        }) {
-            Text("Consultar Rostros Registrados")
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Botón para limpiar los registros de SharedPreferences
-        Button(onClick = {
-            context.getSharedPreferences("face_guard_prefs", Context.MODE_PRIVATE)
-                .edit()
-                .clear()
-                .apply()
-            val msg = "Todos los registros de rostros han sido eliminados"
-            statusText = msg
-            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-        }) {
-            Text("Limpiar Todos los Registros")
+        Button(
+            onClick = onEnableAdmin,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("1. Activar Permiso de Administración")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Button(onClick = onStartService) {
-            Text("3. Iniciar Servicio en Segundo Plano")
+        Button(
+            onClick = onStartService,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("2. Iniciar Servicio de Monitoreo")
         }
     }
 }
 
-fun procesarFotoGaleria(context: Context, bitmapGaleria: Bitmap) {
-    // 1. Configurar el detector de rostros (igual que en el analizador)
-    val options = FaceDetectorOptions.Builder()
-        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
-        .build()
-    val detector = FaceDetection.getClient(options)
-    val image = InputImage.fromBitmap(bitmapGaleria, 0)
+@Composable
+fun LoginScreen(onAccessGranted: () -> Unit) {
+    var password by remember { mutableStateOf("") }
+    val correctPassword = "130923"
 
-    detector.process(image)
-        .addOnSuccessListener { faces ->
-            if (faces.isNotEmpty()) {
-                val face = faces.first()
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text(
+            text = "Ingrese código de soporte",
+            style = MaterialTheme.typography.headlineSmall
+        )
 
-                // 2. Recortar el rostro del bitmap de la galería
-                // Nota: Asegúrate de tener la función cropFace disponible (la que definimos antes)
-                val croppedFace = cropFace(bitmapGaleria, face.boundingBox)
+        Spacer(modifier = Modifier.height(16.dp))
 
-                if (croppedFace != null) {
-                    // 3. Guardar el embedding usando FaceMatcher
-                    FaceMatcher.saveBlockedFace(context, face, croppedFace)
-                    Toast.makeText(context, "Rostro de galería registrado con éxito", Toast.LENGTH_SHORT).show()
+        OutlinedTextField(
+            value = password,
+            onValueChange = {
+                password = it
+                if (it == correctPassword) {
+                    onAccessGranted()
                 }
-            } else {
-                Toast.makeText(context, "No se detectó ningún rostro en la foto", Toast.LENGTH_SHORT).show()
-            }
-        }
-        .addOnFailureListener {
-            Toast.makeText(context, "Error al procesar imagen de galería", Toast.LENGTH_SHORT).show()
-        }
-}
+            },
+            label = { Text("Código") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth()
+        )
 
-// Función auxiliar de recorte (puedes ponerla aquí o en un archivo de Utils)
-private fun cropFace(bitmap: Bitmap, boundingBox: Rect): Bitmap? {
-    return try {
-        val left = boundingBox.left.coerceIn(0, bitmap.width - 1)
-        val top = boundingBox.top.coerceIn(0, bitmap.height - 1)
-        val width = boundingBox.width().coerceAtMost(bitmap.width - left)
-        val height = boundingBox.height().coerceAtMost(bitmap.height - top)
-        Bitmap.createBitmap(bitmap, left, top, width, height)
-    } catch (e: Exception) {
-        null
+        if (password.length >= 6 && password != correctPassword) {
+            Text(
+                text = "Código incorrecto",
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
     }
 }
 
-fun triggerFaceGuardWorkerManually(context: Context) {
-    val workRequest = OneTimeWorkRequestBuilder<FaceGuardWorker>().build()
-    WorkManager.getInstance(context).enqueue(workRequest)
+/**
+ * Verifica si el permiso PACKAGE_USAGE_STATS está concedido.
+ */
+fun hasUsageStatsPermission(context: Context): Boolean {
+    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+    val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        appOps.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+    } else {
+        @Suppress("DEPRECATION")
+        appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName
+        )
+    }
+    return mode == AppOpsManager.MODE_ALLOWED
+}
+
+/**
+ * Componente que muestra un botón de advertencia si falta el permiso de uso,
+ * o un mensaje de confirmación si ya está activo.
+ */
+@Composable
+fun UsagePermissionCheck() {
+    val context = LocalContext.current
+    var hasPermission by remember { mutableStateOf(hasUsageStatsPermission(context)) }
+
+    // Re-verificar cuando el usuario regresa de la pantalla de ajustes
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        hasPermission = hasUsageStatsPermission(context)
+    }
+
+    if (!hasPermission) {
+        Button(
+            onClick = {
+                val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+                context.startActivity(intent)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.error
+            )
+        ) {
+            Icon(Icons.Default.Warning, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Falta Permiso de Uso (Click aquí)")
+        }
+    } else {
+        Text(
+            text = "✓ Permiso de estadísticas activo",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
 }

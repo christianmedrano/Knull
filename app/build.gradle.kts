@@ -57,19 +57,9 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 
-    // CameraX
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-
-    // Google ML Kit - Detección de rostros
-    implementation(libs.google.mlkit.face.detection)
-
     // Lifecycle Service
     implementation(libs.androidx.lifecycle.service)
 
     val workVersion = "2.9.0"
     implementation("androidx.work:work-runtime-ktx:$workVersion")
-
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
 }
