@@ -44,8 +44,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import pe.com.scotiabank.blpm.android.knull.faceguard.AdminReceiver
 import pe.com.scotiabank.blpm.android.knull.faceguard.FaceGuardService
+import pe.com.scotiabank.blpm.android.knull.faceguard.FaceGuardService.Companion.isUnlockedByAdmin
 
 class MainActivity : ComponentActivity() {
+
+    override fun onDestroy() {
+        super.onDestroy()
+        isUnlockedByAdmin = false
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,7 +76,12 @@ class MainActivity : ComponentActivity() {
                             onStartService = { startGuardService() }
                         )
                     } else {
-                        LoginScreen(onAccessGranted = { isAuthorized = true })
+                        LoginScreen(
+                            onAccessGranted = {
+                                isAuthorized = true
+                                isUnlockedByAdmin = true
+                            }
+                        )
                     }
                 }
             }
@@ -134,7 +145,7 @@ fun HomeScreen(
 @Composable
 fun LoginScreen(onAccessGranted: () -> Unit) {
     var password by remember { mutableStateOf("") }
-    val correctPassword = "130923"
+    val correctPassword = "071222"
 
     Column(
         modifier = Modifier

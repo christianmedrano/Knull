@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Permiso específico para el tipo dataSync -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:allowBackup="true"
@@ -19,6 +20,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Knull"
         tools:targetApi="31">
+        <activity
+            android:name=".BlockerActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -47,6 +52,18 @@
             android:exported="false"
             android:directBootAware="true"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".faceguard.AppAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
 
         <!-- Admin de dispositivo para ejecutar el bloqueo del teléfono -->
         <receiver

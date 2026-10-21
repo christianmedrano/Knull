@@ -11,10 +11,7 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.MediaPlayer
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
@@ -23,11 +20,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import pe.com.scotiabank.blpm.android.knull.BlockerActivity
 import pe.com.scotiabank.blpm.android.knull.R
 
 class FaceGuardService : LifecycleService() {
 
     private val TAG = "FaceGuardService"
+
+    companion object {
+        var isUnlockedByAdmin: Boolean = false
+    }
 
     // Blacklist de paquetes que se cerrarán forzosamente al pasar a primer plano
     private val blackList = setOf(
@@ -91,8 +93,27 @@ class FaceGuardService : LifecycleService() {
         "com.outfit7.talkingtomgoldrun",          // Talking Tom Gold Run
         "com.vNG.Roblox",                          // Roblox (variante)
 
-        "com.android.chrome",                      // Google Chrome
-        "com.android.vending",                     // Google Play Store
+        // Google Chrome y Google Play Store
+        "com.android.chrome",
+        "com.android.vending",
+
+        // Google Gemini
+        //"com.google.android.googlequicksearchbox",
+
+        // YouTube y variantes
+        "com.google.android.youtube",
+        "com.google.android.apps.youtube.kids",
+
+        // Tienda y Navegador de Samsung
+        "com.sec.android.app.samsungapps",
+        "com.sec.android.app.sbrowser",
+
+        // Google Drive
+        "com.google.android.apps.docs",
+
+        //"com.android.settings",
+
+        "com.google.android.googlequicksearchbox",
     )
 
     private var monitorJob: Job? = null
@@ -126,18 +147,34 @@ class FaceGuardService : LifecycleService() {
         startAppMonitoring()
     }
 
+    /*private fun startAppMonitoring() {
+        if (monitorJob?.isActive == true) return
+
+        monitorJob = lifecycleScope.launch(Dispatchers.IO) {
+            Log.d(TAG, "Bucle de monitoreo iniciado.")
+            while (isActive) {
+                val currentPackage = getForegroundPackage()
+
+                if (currentPackage != null && blackList.contains(currentPackage)) {
+                    Log.w(TAG, "Detección en Foreground: $currentPackage. Ejecutando force-stop...")
+                    //forceStopPackage(currentPackage)
+                    goHome(currentPackage)
+                }
+
+                delay(500)
+            }
+        }
+    }*/
     private fun startAppMonitoring() {
         if (monitorJob?.isActive == true) return
 
         monitorJob = lifecycleScope.launch(Dispatchers.IO) {
             Log.d(TAG, "Bucle de monitoreo iniciado.")
             while (isActive) {
-                val currentPackage = getForegroundPackage() // o getForegroundPackageWithRoot()
+                val (currentPackage, currentClass) = getForegroundPackageAndClass()
 
-                if (currentPackage != null && blackList.contains(currentPackage)) {
-                    Log.w(TAG, "Detección en Foreground: $currentPackage. Ejecutando force-stop...")
-                    //forceStopPackage(currentPackage)
-                    goHome(currentPackage)
+                if (currentPackage != null) {
+                    goHome(currentPackage, currentClass)
                 }
 
                 delay(500)
@@ -153,7 +190,7 @@ class FaceGuardService : LifecycleService() {
     /**
      * Consulta el paquete actualmente enfocado en pantalla usando comandos Root Shell.
      */
-    private fun getForegroundPackage(): String? {
+    /*private fun getForegroundPackage(): String? {
         val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
         val time = System.currentTimeMillis()
         // Consultar el historial de uso en la última ventana de 5 segundos
@@ -167,20 +204,27 @@ class FaceGuardService : LifecycleService() {
             return mostRecent?.packageName
         }
         return null
+    }*/
+    private fun getForegroundPackageAndClass(): Pair<String?, String?> {
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        val time = System.currentTimeMillis()
+        val events = usm.queryEvents(time - 3000, time)
+        val event = android.app.usage.UsageEvents.Event()
+
+        var lastPackage: String? = null
+        var lastClass: String? = null
+
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+            if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED) {
+                lastPackage = event.packageName
+                lastClass = event.className
+            }
+        }
+        return Pair(lastPackage, lastClass)
     }
 
-    /*private fun forceStopPackage(packageName: String): Boolean {
-        return try {
-            // Cierre directo usando 'su -c'
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "am force-stop $packageName"))
-            val exitValue = process.waitFor()
-            exitValue == 0
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al ejecutar am force-stop sobre $packageName: ${e.message}")
-            false
-        }
-    }*/
-    private fun goHome(currentPackage: String) {
+    /*private fun goHome(currentPackage: String) {
         if (currentPackage != null && blackList.contains(currentPackage)) {
             Log.w(TAG, "App bloqueada detectada: $currentPackage. Redirigiendo al Home...")
 
@@ -191,6 +235,61 @@ class FaceGuardService : LifecycleService() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             startActivity(homeIntent)
+        }
+    }*/
+    private fun goHome(currentPackage: String, currentClass: String?) {
+        var isBlocked = false
+
+        // 1. Detección quirúrgica dentro de Ajustes (com.android.settings)
+        if (currentPackage == "com.android.settings" && isUnlockedByAdmin.not()) {
+            val isDeviceAdminScreen = //currentClass?.contains("DeviceAdmin", ignoreCase = true) == true ||
+                    currentClass?.contains("DeviceAdminSettings", ignoreCase = true) == true ||
+                    currentClass?.contains("DeviceAdminAdd", ignoreCase = true) == true ||
+                    currentClass?.contains("SubSettings", ignoreCase = true) == true
+                    //currentClass?.contains("SecuritySettings", ignoreCase = true) == true
+
+            if (isDeviceAdminScreen) {
+                Log.w(TAG, "Intento de entrar a Administración de Dispositivos detectado: $currentClass")
+                isBlocked = true
+            }
+        }
+        // 2. Bloqueo normal para el resto de la lista negra
+        else if (blackList.contains(currentPackage)) {
+            isBlocked = true
+        }
+
+        // Si cae en bloqueo, reproducimos sonido y mandamos al Home
+        if (isBlocked) {
+            Log.w(TAG, "Detección bloqueada: $currentPackage ($currentClass). Redirigiendo al Home...")
+
+            playCastigoSound()
+
+            /*val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+            }
+            startActivity(homeIntent)*/
+            /*val blockerIntent = Intent(applicationContext, BlockerActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK ora
+                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
+                        Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+            }
+            startActivity(blockerIntent)*/
+            forceStopPackage(currentPackage)
+        }
+    }
+
+    private fun forceStopPackage(targetPackage: String) {
+        try {
+            // Ejecutar su pasando un Array asegura que los argumentos no se corrompan en la Shell
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "am force-stop $targetPackage"))
+            process.waitFor()
+            Log.d(TAG, "Cierre forzado ejecutado con éxito para: $targetPackage")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error ejecutando force-stop para $targetPackage", e)
         }
     }
 
