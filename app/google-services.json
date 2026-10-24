@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "394620132609",
+    "project_id": "knull-472c7",
+    "storage_bucket": "knull-472c7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:394620132609:android:d1a801b12462c64fdfcf00",
+        "android_client_info": {
+          "package_name": "pe.com.scotiabank.blpm.android.knull"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCFnqfJhE0FbpsPaqha3oSQPA8RFv5eYVM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

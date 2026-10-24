@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.google.services)
 }
 
 android {
@@ -62,4 +63,8 @@ dependencies {
 
     val workVersion = "2.9.0"
     implementation("androidx.work:work-runtime-ktx:$workVersion")
+
+    implementation(platform("com.google.firebase:firebase-bom:33.0.0")) // o la versión que uses
+    implementation("com.google.firebase:firebase-config-ktx")
+    implementation("com.google.firebase:firebase-database-ktx")
 }
