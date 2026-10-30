@@ -93,6 +93,7 @@ class AppAccessibilityService : AccessibilityService() {
         //"com.android.settings",
 
         "com.google.android.googlequicksearchbox",
+        "com.samsung.android.game.gametools",
     )
 
     override fun onServiceConnected() {

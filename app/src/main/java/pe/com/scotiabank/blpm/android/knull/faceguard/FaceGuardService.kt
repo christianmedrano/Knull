@@ -1,38 +1,23 @@
 package pe.com.scotiabank.blpm.android.knull.faceguard
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.usage.UsageStatsManager
-import android.content.BroadcastReceiver
-import android.content.Context
+import android.accessibilityservice.AccessibilityService
 import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.ServiceInfo
 import android.media.MediaPlayer
-import android.os.Build
 import android.speech.tts.TextToSpeech
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.lifecycle.LifecycleService
-import androidx.lifecycle.lifecycleScope
+import android.view.accessibility.AccessibilityEvent
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.DatabaseReference
 import com.google.firebase.database.ValueEventListener
 import com.google.firebase.database.ktx.database
 import com.google.firebase.ktx.Firebase
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 import org.json.JSONObject
 import pe.com.scotiabank.blpm.android.knull.R
 import java.util.Calendar
 import java.util.Locale
 
-class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
+class FaceGuardService : AccessibilityService(), TextToSpeech.OnInitListener {
 
     private val TAG = "FaceGuardService"
 
@@ -42,7 +27,6 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
         var currentTemplateJson: String = "{\"start_time\":\"17:00\",\"end_time\":\"17:30\",\"is_active\":true}"
     }
 
-    // Tu Blacklist original intacta
     private val blackList = setOf(
         "com.roblox.client", "com.pokemon.pokemontcgp", "jp.pokemon.pokemontcgp",
         "com.epicgames.fortnite", "com.dts.freefireth", "com.dts.freefiremax", "com.tencent.ig",
@@ -54,12 +38,11 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
         "com.exploration.master.craft", "com.and.games505.TerrariaPaid", "com.android.chrome",
         "com.android.vending", "com.google.android.youtube", "com.google.android.apps.youtube.kids",
         "com.sec.android.app.samsungapps", "com.sec.android.app.sbrowser",
-        "com.google.android.apps.docs", "com.google.android.googlequicksearchbox"
+        //"com.google.android.apps.docs",
+        "com.google.android.googlequicksearchbox",
+        "com.good.boy.education.craft.best.building"
     )
 
-    private var monitorJob: Job? = null
-
-    // --- VARIABLES PARA TTS Y FIREBASE REALTIME DATABASE ---
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
     private var lastNotifiedPackage: String? = null
@@ -67,59 +50,25 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
     private var databaseRef: DatabaseReference? = null
     private var databaseListener: ValueEventListener? = null
 
-    private val screenReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            when (intent?.action) {
-                Intent.ACTION_USER_PRESENT -> {
-                    Log.d(TAG, "Pantalla desbloqueada: iniciando monitoreo Root...")
-                    startAppMonitoring()
-                }
-                Intent.ACTION_SCREEN_OFF -> {
-                    Log.d(TAG, "Pantalla apagada: pausando monitoreo Root.")
-                    stopAppMonitoring()
-                    lastNotifiedPackage = null // Reseteamos aviso al apagar pantalla
-                }
-            }
-        }
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        startForegroundService()
-
-        // --- INICIALIZAR TTS Y REALTIME DATABASE ---
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        Log.d(TAG, "Servicio de Accesibilidad conectado e iniciado con éxito.")
         tts = TextToSpeech(this, this)
         setupRealtimeDatabase()
-
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_USER_PRESENT)
-            addAction(Intent.ACTION_SCREEN_OFF)
-        }
-        registerReceiver(screenReceiver, filter)
-
-        startAppMonitoring()
     }
 
-    // --- CONFIGURACIÓN DE FIREBASE REALTIME DATABASE EN TIEMPO REAL ---
-    // --- CONFIGURACIÓN DE FIREBASE REALTIME DATABASE LEYENDO EL ÁRBOL DE NODOS ---
     private fun setupRealtimeDatabase() {
         try {
-            // Apunta al nodo "template" principal
             databaseRef = Firebase.database.reference.child("template")
 
             databaseListener = object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
-                    // Leemos los nodos hijos independientes directamente
                     val startTime = snapshot.child("start_time").getValue(String::class.java) ?: "17:00"
                     val endTime = snapshot.child("end_time").getValue(String::class.java) ?: "17:30"
                     val isActive = snapshot.child("is_active").getValue(Boolean::class.java) ?: false
 
-                    // Reconstruimos el formato JSON en memoria para que tu checkFreeTimeWindow() funcione intacto
                     currentTemplateJson = "{\"start_time\":\"$startTime\",\"end_time\":\"$endTime\",\"is_active\":$isActive}"
-
                     Log.d(TAG, "Template actualizado desde nodos de Firebase: $currentTemplateJson")
-
-                    // Reseteamos el aviso para que la voz anuncie de nuevo si cambia el tiempo
                     lastNotifiedPackage = null
                 }
 
@@ -134,7 +83,6 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
         }
     }
 
-    // --- CALLBACK DE TEXT TO SPEECH ---
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             val result = tts?.setLanguage(Locale("es", "ES"))
@@ -144,110 +92,20 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun startAppMonitoring() {
-        if (monitorJob?.isActive == true) return
+    // --- MOTOR DE ACCESIBILIDAD: El sistema llama a esto instantáneamente al cambiar de app ---
+    override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val currentPackage = event.packageName?.toString() ?: return
+            val currentClass = event.className?.toString()
 
-        monitorJob = lifecycleScope.launch(Dispatchers.IO) {
-            Log.d(TAG, "Bucle de monitoreo iniciado.")
-            while (isActive) {
-                val (currentPackage, currentClass) = getForegroundPackageAndClass()
-                val activePackage = getActiveForegroundPackage()
-                val targetPackage = activePackage ?: currentPackage
-
-                if (targetPackage != null) {
-                    goHome(targetPackage, currentClass)
-                }
-
-                delay(500)
-            }
+            goHome(currentPackage, currentClass)
         }
     }
 
-    private fun getActiveForegroundPackage(): String? {
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val time = System.currentTimeMillis()
-        val stats = usm.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, time - 2000, time)
-        if (!stats.isNullOrEmpty()) {
-            val mostRecent = stats.maxByOrNull { it.lastTimeUsed }
-            return mostRecent?.packageName
-        }
-        return null
+    override fun onInterrupt() {
+        Log.w(TAG, "El Servicio de Accesibilidad ha sido interrumpido.")
     }
 
-    private fun stopAppMonitoring() {
-        monitorJob?.cancel()
-        monitorJob = null
-    }
-
-    private fun getForegroundPackageAndClass(): Pair<String?, String?> {
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        val time = System.currentTimeMillis()
-        val events = usm.queryEvents(time - 3000, time)
-        val event = android.app.usage.UsageEvents.Event()
-
-        var lastPackage: String? = null
-        var lastClass: String? = null
-
-        while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED) {
-                lastPackage = event.packageName
-                lastClass = event.className
-            }
-        }
-        return Pair(lastPackage, lastClass)
-    }
-
-    /*private fun goHome(currentPackage: String, currentClass: String?) {
-        var isBlocked = false
-
-        // 1. Detección quirúrgica dentro de Ajustes (com.android.settings)
-        if (currentPackage == "com.android.settings" && isUnlockedByAdmin.not()) {
-            val isDeviceAdminScreen =
-                currentClass?.contains("DeviceAdminSettings", ignoreCase = true) == true ||
-                        currentClass?.contains("DeviceAdminAdd", ignoreCase = true) == true ||
-                        currentClass?.contains("SubSettings", ignoreCase = true) == true
-
-            if (isDeviceAdminScreen) {
-                Log.w(TAG, "Intento de entrar a Administración de Dispositivos detectado: $currentClass")
-                isBlocked = true
-            }
-        }
-        // 2. Bloqueo normal para el resto de la lista negra
-        else if (blackList.contains(currentPackage)) {
-
-            // --- EVALUACIÓN DE HORARIO LIBRE USANDO REALTIME DATABASE ---
-            val (isFreeTime, remainingMinutes) = checkFreeTimeWindow()
-
-            if (isFreeTime) {
-                Log.d(TAG, "Horario libre activo para $currentPackage. Minutos restantes: $remainingMinutes")
-
-                if (lastNotifiedPackage != currentPackage) {
-                    lastNotifiedPackage = currentPackage
-                    speakRemainingTime(remainingMinutes)
-                }
-                isBlocked = false
-            } else {
-                lastNotifiedPackage = null
-                isBlocked = true
-            }
-        } else {
-            lastNotifiedPackage = null
-        }
-
-        if (isBlocked) {
-            Log.w(TAG, "Detección bloqueada: $currentPackage ($currentClass). Redirigiondo al Home...")
-            playCastigoSound()
-            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_HOME)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent.FLAG_ACTIVITY_CLEAR_TASK or
-                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-            }
-            startActivity(homeIntent)
-        }
-    }*/
     private fun goHome(currentPackage: String, currentClass: String?) {
         var isBlocked = false
 
@@ -270,8 +128,6 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
         }
         // 3. Bloqueo condicional para el resto de la lista negra (evalúa horario libre)
         else if (blackList.contains(currentPackage)) {
-
-            // --- EVALUACIÓN DE HORARIO LIBRE USANDO REALTIME DATABASE ---
             val (isFreeTime, remainingMinutes) = checkFreeTimeWindow()
 
             if (isFreeTime) {
@@ -281,10 +137,10 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
                     lastNotifiedPackage = currentPackage
                     speakRemainingTime(remainingMinutes)
                 }
-                isBlocked = false // Juegos permitidos solo si hay horario libre
+                isBlocked = false
             } else {
                 lastNotifiedPackage = null
-                isBlocked = true // Fuera de horario libre -> Bloqueado
+                isBlocked = true
             }
         } else {
             lastNotifiedPackage = null
@@ -304,7 +160,6 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
         }
     }
 
-    // --- PARSEA EL JSON OBTENIDO DE REALTIME DATABASE ---
     private fun checkFreeTimeWindow(): Pair<Boolean, Int> {
         return try {
             val jsonString = currentTemplateJson
@@ -349,30 +204,6 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun startForegroundService() {
-        val channelId = "app_guard_channel"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId, "Guardia de Aplicaciones", NotificationManager.IMPORTANCE_HIGH
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
-        }
-
-        val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Protección activa")
-            .setContentText("Supervisando ejecución de aplicaciones...")
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(1, notification)
-        }
-    }
-
     private fun playCastigoSound() {
         try {
             val mediaPlayer = MediaPlayer.create(applicationContext, R.raw.madrina)
@@ -384,20 +215,11 @@ class FaceGuardService : LifecycleService(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
-        // Remover el listener de la base de datos al destruir el servicio
         if (databaseRef != null && databaseListener != null) {
             databaseRef?.removeEventListener(databaseListener!!)
         }
-
         tts?.stop()
         tts?.shutdown()
-
         super.onDestroy()
-        stopAppMonitoring()
-        try {
-            unregisterReceiver(screenReceiver)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
     }
 }
